@@ -1,7 +1,8 @@
 SETUP (Windows)
 1. Install Python 3.10+ and ffmpeg (winget install Gyan.FFmpeg)  -> ffmpeg + ffprobe must be on PATH
 2. pip install -r requirements.txt
-3. Host templates_sample.json (e.g. GitHub repo -> raw URL), then set TEMPLATE_FEED_URL in app.py
+3. Templates: 12 are built in. templates.json is the online feed (default URL: raw.githubusercontent.com/RootRoy08/CaptionApp/main/templates.json,
+   which works once the repo is public). To use another feed, put its URL in %APPDATA%\HinglishCaptioner\feed_url.txt
 4. python app.py
 
 USING THE PREVIEW

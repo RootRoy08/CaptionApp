@@ -4,8 +4,8 @@ Video -> word-synced Hinglish captions (faster-whisper) -> styled with online te
 import os, re, sys, json, bisect, shutil, subprocess, tempfile, urllib.request
 from collections import deque
 from datetime import datetime
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QRectF, QPointF, QSizeF
-from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QColor
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QRectF, QPointF, QSizeF, QSize
+from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QColor, QPixmap, QIcon
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -17,12 +17,15 @@ if getattr(sys, "frozen", False):
     os.environ["PATH"] = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)) + os.pathsep + os.environ.get("PATH", "")
 
 # ---- CONFIG: point this at a JSON feed of caption templates (see templates_sample.json) ----
-TEMPLATE_FEED_URL = os.environ.get("TEMPLATE_FEED_URL", "https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/templates.json")
+TEMPLATE_FEED_URL = os.environ.get("TEMPLATE_FEED_URL", "https://raw.githubusercontent.com/RootRoy08/CaptionApp/main/templates.json")
 CHECK_EVERY_MIN = 30
 MAX_TEMPLATES = 10
 DATA = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HinglishCaptioner")
 CACHE = os.path.join(DATA, "templates.json")
 os.makedirs(DATA, exist_ok=True)
+
+_f = os.path.join(DATA, "feed_url.txt")      # optional: put a different feed URL in this file
+if os.path.isfile(_f): TEMPLATE_FEED_URL = open(_f, encoding="utf-8").read().strip()
 
 # ---- optional NVIDIA GPU support: cuBLAS + cuDNN DLLs are downloaded once from PyPI into %APPDATA%
 GPU_DIR = os.path.join(DATA, "gpu")
@@ -59,9 +62,156 @@ def install_gpu_libs(progress):
         os.remove(tmp)
     add_gpu_path(); return True
 
-BUNDLED = [{"id": "classic", "name": "Classic White", "published": "2000-01-01", "font": "Arial", "size": 56,
-            "text": "#FFFFFF", "highlight": "#FFFFFF", "outline": "#000000", "outline_w": 3, "bold": True,
-            "upper": False, "position": "bottom"}]
+BUNDLED = [{'id': 'classic',
+  'name': 'Classic White',
+  'published': '2024-01-12',
+  'font': 'Arial',
+  'size': 56,
+  'text': '#FFFFFF',
+  'highlight': '#FFFFFF',
+  'outline': '#000000',
+  'outline_w': 3,
+  'bold': True,
+  'upper': False,
+  'position': 'bottom'},
+ {'id': 'yellow-pop',
+  'name': 'Yellow Pop',
+  'published': '2024-01-11',
+  'font': 'Arial Black',
+  'size': 60,
+  'text': '#FFFFFF',
+  'highlight': '#FFD400',
+  'outline': '#000000',
+  'outline_w': 4,
+  'bold': True,
+  'upper': True,
+  'position': 'middle'},
+ {'id': 'neon-green',
+  'name': 'Neon Green',
+  'published': '2024-01-10',
+  'font': 'Impact',
+  'size': 62,
+  'text': '#FFFFFF',
+  'highlight': '#39FF14',
+  'outline': '#000000',
+  'outline_w': 4,
+  'bold': False,
+  'upper': True,
+  'position': 'middle'},
+ {'id': 'red-hot',
+  'name': 'Red Hot',
+  'published': '2024-01-09',
+  'font': 'Impact',
+  'size': 62,
+  'text': '#FFFFFF',
+  'highlight': '#FF3B30',
+  'outline': '#000000',
+  'outline_w': 5,
+  'bold': False,
+  'upper': True,
+  'position': 'middle'},
+ {'id': 'cyan-glow',
+  'name': 'Cyan Glow',
+  'published': '2024-01-08',
+  'font': 'Segoe UI Black',
+  'size': 58,
+  'text': '#FFFFFF',
+  'highlight': '#00E5FF',
+  'outline': '#003B46',
+  'outline_w': 4,
+  'bold': True,
+  'upper': True,
+  'position': 'bottom'},
+ {'id': 'pink-pop',
+  'name': 'Pink Pop',
+  'published': '2024-01-07',
+  'font': 'Arial Black',
+  'size': 58,
+  'text': '#FFFFFF',
+  'highlight': '#FF4DA6',
+  'outline': '#3A0020',
+  'outline_w': 4,
+  'bold': True,
+  'upper': True,
+  'position': 'middle'},
+ {'id': 'clean-minimal',
+  'name': 'Clean Minimal',
+  'published': '2024-01-06',
+  'font': 'Segoe UI',
+  'size': 50,
+  'text': '#FFFFFF',
+  'highlight': '#FFFFFF',
+  'outline': '#222222',
+  'outline_w': 2,
+  'bold': True,
+  'upper': False,
+  'position': 'bottom'},
+ {'id': 'box-black',
+  'name': 'Black Box',
+  'published': '2024-01-05',
+  'font': 'Arial',
+  'size': 50,
+  'text': '#FFFFFF',
+  'highlight': '#FFD400',
+  'outline': '#000000',
+  'outline_w': 0,
+  'bold': True,
+  'upper': False,
+  'position': 'bottom',
+  'box': '#000000',
+  'box_pad': 0.18},
+ {'id': 'box-yellow',
+  'name': 'Yellow Box',
+  'published': '2024-01-04',
+  'font': 'Arial',
+  'size': 50,
+  'text': '#111111',
+  'highlight': '#E53935',
+  'outline': '#000000',
+  'outline_w': 0,
+  'bold': True,
+  'upper': False,
+  'position': 'bottom',
+  'box': '#FFD400',
+  'box_pad': 0.18},
+ {'id': 'box-white',
+  'name': 'White Box',
+  'published': '2024-01-03',
+  'font': 'Segoe UI',
+  'size': 50,
+  'text': '#1A1A1A',
+  'highlight': '#1E88E5',
+  'outline': '#000000',
+  'outline_w': 0,
+  'bold': True,
+  'upper': False,
+  'position': 'bottom',
+  'box': '#FFFFFF',
+  'box_pad': 0.18},
+ {'id': 'fun-comic',
+  'name': 'Fun Comic',
+  'published': '2024-01-02',
+  'font': 'Comic Sans MS',
+  'size': 56,
+  'text': '#FFFFFF',
+  'highlight': '#FFEB3B',
+  'outline': '#1A237E',
+  'outline_w': 4,
+  'bold': True,
+  'upper': False,
+  'position': 'middle'},
+ {'id': 'elegant',
+  'name': 'Elegant Serif',
+  'published': '2024-01-01',
+  'font': 'Georgia',
+  'size': 54,
+  'text': '#F5E6C8',
+  'highlight': '#FFFFFF',
+  'outline': '#000000',
+  'outline_w': 3,
+  'bold': True,
+  'upper': False,
+  'position': 'bottom'}]
 # Roman-script prompt strongly biases Whisper to output Hinglish (Roman Hindi + English words)
 PROMPT = "Haan toh guys, aaj hum baat karenge ki yeh video kaise banate hain. Bilkul simple hai, chalo start karte hain."
 
@@ -174,7 +324,7 @@ def wrap_words(texts, family, fpx, bold, max_w):
 def write_ass(lines, tpl, style, path, vw, vh, ow, oh):
     """style = {cx, cy, size}: caption centre as fraction of frame, font size as fraction of short side."""
     fpx = style["size"] * min(vw, vh) * (oh / vh)
-    outl = tpl.get("outline_w", 3) / tpl["size"] * fpx
+    outl = 0 if tpl.get("box") else tpl.get("outline_w", 3) / tpl["size"] * fpx
     x, y = style["cx"] * ow, style["cy"] * oh
     bold = bool(tpl.get("bold"))
     hdr = (f"[Script Info]\nScriptType: v4.00+\nWrapStyle: 2\nPlayResX: {ow}\nPlayResY: {oh}\n\n[V4+ Styles]\n"
@@ -187,7 +337,16 @@ def write_ass(lines, tpl, style, path, vw, vh, ow, oh):
         f.write(hdr)
         for l in lines:
             ws = l["words"]; texts = [disp(w["w"], tpl) for w in ws]
-            rows, _, _ = wrap_words(texts, tpl["font"], fpx, bold, 0.9 * ow)
+            rows, _, fm = wrap_words(texts, tpl["font"], fpx, bold, 0.9 * ow)
+            if tpl.get("box"):
+                sp = fm.horizontalAdvance(" "); pad = tpl.get("box_pad", 0.18) * fpx
+                top = y - len(rows) * fpx / 2; bc = ass_col(tpl["box"])[4:]
+                for r, row in enumerate(rows):
+                    rw = sum(fm.horizontalAdvance(texts[i]) for i in row) + sp * (len(row) - 1)
+                    x0, x1, y0, y1 = x - rw / 2 - pad, x + rw / 2 + pad, top + r * fpx, top + (r + 1) * fpx
+                    f.write(f"Dialogue: 0,{ts_ass(l['start'])},{ts_ass(l['end'])},Default,,0,0,0,,"
+                            f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\1c&H{bc}&}}m {x0:.0f} {y0:.0f} l {x1:.0f} {y0:.0f} "
+                            f"{x1:.0f} {y1:.0f} {x0:.0f} {y1:.0f}{{\\p0}}\n")
             out_rows = []
             for row in rows:
                 seg = []
@@ -195,7 +354,7 @@ def write_ass(lines, tpl, style, path, vw, vh, ow, oh):
                     nxt = ws[i + 1]["s"] if i + 1 < len(ws) else l["end"]
                     seg.append(f"{{\\k{max(1, int((nxt - ws[i]['s']) * 100))}}}{texts[i]}")
                 out_rows.append(" ".join(seg))
-            f.write(f"Dialogue: 0,{ts_ass(l['start'])},{ts_ass(l['end'])},Default,,0,0,0,,"
+            f.write(f"Dialogue: 1,{ts_ass(l['start'])},{ts_ass(l['end'])},Default,,0,0,0,,"
                     f"{{\\an5\\pos({x:.0f},{y:.0f})}}" + "\\N".join(out_rows) + "\n")
 
 def burn(video, tmp, size, src_size, dur, hevc, out_path, prog):
@@ -257,8 +416,14 @@ class CaptionItem(QGraphicsItem):
                 path = QPainterPath(); path.addText(x, y + fm.ascent(), self.font, self.texts[i])
                 paths.append((path, self.words[i]["s"] <= self.t)); x += fm.horizontalAdvance(self.texts[i]) + sp
             y += self.fpx
-        p.setPen(QPen(QColor(tpl["outline"]), 2 * outl, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        for path, _ in paths: p.drawPath(path)
+        if tpl.get("box"):
+            pad = tpl.get("box_pad", 0.18) * self.fpx; p.setPen(Qt.NoPen); p.setBrush(QColor(tpl["box"]))
+            for r in range(len(self.rows)):
+                p.drawRect(QRectF(-self.rw[r] / 2 - pad, -len(self.rows) * self.fpx / 2 + r * self.fpx,
+                                  self.rw[r] + 2 * pad, self.fpx))
+        else:
+            p.setPen(QPen(QColor(tpl["outline"]), 2 * outl, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            for path, _ in paths: p.drawPath(path)
         p.setPen(Qt.NoPen)
         for path, hi in paths:
             p.setBrush(QColor(tpl["highlight"] if hi else tpl["text"])); p.drawPath(path)
@@ -284,13 +449,22 @@ class VideoView(QGraphicsView):
 # ------------------------------------------------------------------ templates
 def load_cache():
     try:
-        return json.load(open(CACHE, encoding="utf-8"))
+        d = json.load(open(CACHE, encoding="utf-8"))
+        if "online" in d: return d
     except Exception:
-        return {"templates": BUNDLED, "seen": []}
+        pass
+    return {"online": [], "seen": []}
+
+def merge(online):
+    """Newest online templates first; built-in ones fill the list up to MAX_TEMPLATES."""
+    ids = {t["id"] for t in online}
+    return (online + [b for b in BUNDLED if b["id"] not in ids])[:MAX_TEMPLATES]
 
 def fetch_templates():
     req = urllib.request.Request(TEMPLATE_FEED_URL, headers={"User-Agent": "HinglishCaptioner"})
     data = json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))["templates"]
+    need = ("id", "name", "font", "size", "text", "highlight", "outline")
+    data = [t for t in data if all(k in t for k in need)]
     data.sort(key=lambda t: t.get("published", ""), reverse=True)
     return data[:MAX_TEMPLATES]
 
@@ -302,6 +476,25 @@ class Worker(QThread):
         except Exception as e: self.fail.emit(str(e))
 
 # ------------------------------------------------------------------ UI
+def make_icon(tpl):
+    """Small thumbnail: 'A' in the text colour, 'a' in the highlight colour, on a video-grey tile."""
+    W, H, px = 88, 52, 28
+    pm = QPixmap(W, H); pm.fill(QColor("#3c3c3c")); p = QPainter(pm); p.setRenderHint(QPainter.Antialiasing)
+    f = make_font(tpl["font"], px, bool(tpl.get("bold"))); fm = QFontMetricsF(f)
+    txt = disp("Aa", tpl); w1 = fm.horizontalAdvance(txt[0]); x = (W - fm.horizontalAdvance(txt)) / 2; y = (H - px) / 2
+    if tpl.get("box"):
+        p.setPen(Qt.NoPen); p.setBrush(QColor(tpl["box"])); p.drawRect(QRectF(x - 7, y - 2, fm.horizontalAdvance(txt) + 14, px + 4))
+    parts = [(txt[0], x, tpl["text"]), (txt[1], x + w1, tpl["highlight"])]
+    paths = []
+    for ch, cx, col in parts:
+        path = QPainterPath(); path.addText(cx, y + fm.ascent(), f, ch); paths.append((path, col))
+    if not tpl.get("box"):
+        p.setPen(QPen(QColor(tpl["outline"]), max(1.5, tpl.get("outline_w", 3) * 0.7), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        for path, _ in paths: p.drawPath(path)
+    p.setPen(Qt.NoPen)
+    for path, col in paths: p.setBrush(QColor(col)); p.drawPath(path)
+    p.end(); return QIcon(pm)
+
 RES = {"Original size": 0, "1080p": 1920, "1440p": 2560, "4K (2160p)": 3840}   # target = long side in px
 POS_Y = {"bottom": 0.86, "middle": 0.5, "top": 0.12}
 
@@ -311,7 +504,7 @@ class App(QWidget):
         self.setWindowTitle("Hinglish Captioner"); self.resize(1200, 780)
         self.video, self.vinfo, self.lines, self.starts, self.workers, self.cap = None, (1920, 1080, 0.0), [], [], [], None
         self.style = {"cx": 0.5, "cy": 0.86, "size": 0.05}
-        self.cache = load_cache(); self.templates = self.cache["templates"]
+        self.cache = load_cache(); self.templates = merge(self.cache["online"])
 
         self.player = QMediaPlayer(); self.audio = QAudioOutput(); self.player.setAudioOutput(self.audio)
         self.scene = QGraphicsScene(self); self.vitem = QGraphicsVideoItem(); self.scene.addItem(self.vitem)
@@ -336,7 +529,7 @@ class App(QWidget):
         self.table = QTableWidget(0, 3); self.table.setHorizontalHeaderLabels(["Start", "End", "Caption (editable)"])
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.itemChanged.connect(self.edited); self.table.cellClicked.connect(self.jump)
-        self.tlist = QListWidget(); self.tlist.currentItemChanged.connect(self.apply_tpl)
+        self.tlist = QListWidget(); self.tlist.setIconSize(QSize(88, 52)); self.tlist.currentItemChanged.connect(self.apply_tpl)
         self.btn_ref = QPushButton("Refresh templates"); self.btn_ref.clicked.connect(self.refresh)
         self.lbl_t = QLabel("")
         self.btn_gpu = QPushButton("Set up NVIDIA GPU (one-time ~1.3 GB download)")
@@ -462,22 +655,27 @@ class App(QWidget):
 
     # ---- templates
     def show_templates(self):
-        self.tlist.clear(); seen = set(self.cache.get("seen", []))
-        for t in self.templates:
-            it = QListWidgetItem(("NEW  " if self.cache.get("seen") and t["id"] not in seen else "") + t["name"])
+        cur = self.tlist.currentItem(); cur_id = cur.data(Qt.UserRole)["id"] if cur else None
+        self.tlist.blockSignals(True); self.tlist.clear()
+        seen, online = set(self.cache.get("seen", [])), {t["id"] for t in self.cache["online"]}
+        row = 0
+        for i, t in enumerate(self.templates):
+            new = bool(seen) and t["id"] in online and t["id"] not in seen
+            it = QListWidgetItem(make_icon(t), ("NEW  " if new else "") + t["name"])
             it.setData(Qt.UserRole, t); self.tlist.addItem(it)
-        self.tlist.setCurrentRow(0)
+            if t["id"] == cur_id: row = i
+        self.tlist.blockSignals(False); self.tlist.setCurrentRow(row)
 
     def refresh(self, silent=False):
         def ok(res):
-            old = {t["id"] for t in self.templates}
+            old = {t["id"] for t in self.cache["online"]}
             new = [t for t in res if t["id"] not in old]
-            self.cache = {"templates": res, "seen": list(old)}
+            self.cache = {"online": res, "seen": list(old)}
             json.dump(self.cache, open(CACHE, "w", encoding="utf-8"))
-            self.templates = res; self.show_templates()
-            self.lbl_t.setText(f"{len(new)} new template(s)!" if new else f"Up to date ({datetime.now():%H:%M})")
+            self.templates = merge(res); self.show_templates()
+            self.lbl_t.setText(f"{len(new)} new online template(s)!" if new else f"Up to date ({datetime.now():%H:%M})")
         w = Worker(lambda p: fetch_templates()); self.workers.append(w); w.done.connect(ok)
-        w.fail.connect(lambda m: self.lbl_t.setText("Offline - using saved templates")); w.start()
+        w.fail.connect(lambda m: self.lbl_t.setText("Template feed unreachable - showing built-in templates")); w.start()
 
     def tpl(self):
         it = self.tlist.currentItem(); return it.data(Qt.UserRole) if it else BUNDLED[0]

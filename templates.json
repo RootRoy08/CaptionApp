@@ -1,0 +1,62 @@
+{
+ "templates": [
+  {
+   "id": "sunset-glow",
+   "name": "Sunset Glow",
+   "published": "2026-10-20",
+   "font": "Segoe UI Black",
+   "size": 58,
+   "text": "#FFFFFF",
+   "highlight": "#FF9F1C",
+   "outline": "#5A1A00",
+   "outline_w": 4,
+   "bold": true,
+   "upper": true,
+   "position": "middle"
+  },
+  {
+   "id": "mint-box",
+   "name": "Mint Box",
+   "published": "2026-10-19",
+   "font": "Arial",
+   "size": 50,
+   "text": "#06251C",
+   "highlight": "#FFFFFF",
+   "outline": "#000000",
+   "outline_w": 0,
+   "bold": true,
+   "upper": false,
+   "position": "bottom",
+   "box": "#00C896",
+   "box_pad": 0.18
+  },
+  {
+   "id": "purple-punch",
+   "name": "Purple Punch",
+   "published": "2026-10-18",
+   "font": "Arial Black",
+   "size": 60,
+   "text": "#FFFFFF",
+   "highlight": "#B388FF",
+   "outline": "#1A0033",
+   "outline_w": 5,
+   "bold": true,
+   "upper": true,
+   "position": "middle"
+  },
+  {
+   "id": "subtitle-pro",
+   "name": "Subtitle Pro",
+   "published": "2026-10-17",
+   "font": "Segoe UI",
+   "size": 52,
+   "text": "#FFFFFF",
+   "highlight": "#FFD400",
+   "outline": "#000000",
+   "outline_w": 2,
+   "bold": true,
+   "upper": false,
+   "position": "bottom"
+  }
+ ]
+}
