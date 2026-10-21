@@ -1,0 +1,3 @@
+PySide6
+faster-whisper
+indic-transliteration

@@ -1,0 +1,5 @@
+{"templates":[
+{"id":"yellow-pop","name":"Yellow Pop (karaoke)","published":"2026-10-15","font":"Arial","size":64,"text":"#FFFFFF","highlight":"#FFD400","outline":"#000000","outline_w":4,"bold":true,"upper":true,"position":"middle"},
+{"id":"neon-green","name":"Neon Green","published":"2026-10-10","font":"Impact","size":60,"text":"#FFFFFF","highlight":"#39FF14","outline":"#000000","outline_w":4,"bold":false,"upper":true,"position":"bottom"},
+{"id":"clean-white","name":"Clean White","published":"2026-09-28","font":"Segoe UI","size":52,"text":"#FFFFFF","highlight":"#FFFFFF","outline":"#222222","outline_w":3,"bold":true,"upper":false,"position":"bottom"}
+]}
