@@ -12,6 +12,10 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
     QFileDialog, QTableWidget, QTableWidgetItem, QListWidget, QListWidgetItem, QComboBox,
     QProgressBar, QMessageBox, QHeaderView, QGraphicsView, QGraphicsScene, QGraphicsItem, QSlider)
 
+# When packaged with PyInstaller, make the bundled ffmpeg/ffprobe visible
+if getattr(sys, "frozen", False):
+    os.environ["PATH"] = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)) + os.pathsep + os.environ.get("PATH", "")
+
 # ---- CONFIG: point this at a JSON feed of caption templates (see templates_sample.json) ----
 TEMPLATE_FEED_URL = os.environ.get("TEMPLATE_FEED_URL", "https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/templates.json")
 CHECK_EVERY_MIN = 30
@@ -19,6 +23,41 @@ MAX_TEMPLATES = 10
 DATA = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HinglishCaptioner")
 CACHE = os.path.join(DATA, "templates.json")
 os.makedirs(DATA, exist_ok=True)
+
+# ---- optional NVIDIA GPU support: cuBLAS + cuDNN DLLs are downloaded once from PyPI into %APPDATA%
+GPU_DIR = os.path.join(DATA, "gpu")
+def add_gpu_path():
+    if os.path.isdir(GPU_DIR):
+        os.environ["PATH"] = GPU_DIR + os.pathsep + os.environ.get("PATH", "")
+        try: os.add_dll_directory(GPU_DIR)
+        except Exception: pass
+add_gpu_path()
+
+def gpu_ready():
+    return os.path.isfile(os.path.join(GPU_DIR, "cublas64_12.dll")) and any(
+        f.lower().startswith("cudnn") for f in os.listdir(GPU_DIR))
+
+def install_gpu_libs(progress):
+    import zipfile
+    os.makedirs(GPU_DIR, exist_ok=True); pkgs = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12"]
+    for n, pkg in enumerate(pkgs):
+        meta = json.loads(urllib.request.urlopen(f"https://pypi.org/pypi/{pkg}/json", timeout=30).read())
+        url = next(f["url"] for f in meta["urls"] if f["filename"].endswith("win_amd64.whl"))
+        tmp = os.path.join(DATA, pkg + ".whl")
+        with urllib.request.urlopen(url, timeout=60) as r, open(tmp, "wb") as out:
+            total, got = int(r.headers.get("Content-Length", 0)), 0
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk: break
+                out.write(chunk); got += len(chunk)
+                progress(min(99, int((n + got / max(total, 1)) * 100 / len(pkgs))))
+        with zipfile.ZipFile(tmp) as z:
+            for name in z.namelist():
+                if name.lower().endswith(".dll"):
+                    with z.open(name) as src, open(os.path.join(GPU_DIR, os.path.basename(name)), "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+        os.remove(tmp)
+    add_gpu_path(); return True
 
 BUNDLED = [{"id": "classic", "name": "Classic White", "published": "2000-01-01", "font": "Arial", "size": 56,
             "text": "#FFFFFF", "highlight": "#FFFFFF", "outline": "#000000", "outline_w": 3, "bold": True,
@@ -39,20 +78,35 @@ def hinglish(word):
         s = s.replace(a, b)
     return s.lower()
 
-def transcribe(path, model_size, progress):
+def _run(path, model_size, device, ctype, progress):
     from faster_whisper import WhisperModel
-    model = WhisperModel(model_size, device="auto", compute_type="auto")
+    model = WhisperModel(model_size, device=device, compute_type=ctype)
     segs, info = model.transcribe(path, language="hi", task="transcribe", word_timestamps=True,
                                   vad_filter=True, beam_size=5, initial_prompt=PROMPT,
                                   condition_on_previous_text=False)
     words = []
-    for seg in segs:
+    for seg in segs:   # segs is lazy: GPU errors can surface here, not only at load time
         for w in seg.words or []:
             t = hinglish(w.word.strip())
             if t:
                 words.append({"w": t, "s": w.start, "e": w.end})
         progress(min(99, int(100 * seg.end / max(info.duration, 1))))
     return group_lines(words)
+
+def transcribe(path, model_size, progress):
+    """GPU first (int8_float16 keeps large-v3 inside 4 GB of VRAM); falls back to CPU on any CUDA problem."""
+    try:
+        import ctranslate2
+        has_gpu = ctranslate2.get_cuda_device_count() > 0
+    except Exception:
+        has_gpu = False
+    if has_gpu:
+        try:
+            return _run(path, model_size, "cuda", "int8_float16", progress), "GPU"
+        except Exception as e:
+            if not re.search(r"cublas|cudnn|cuda|cudart|memory|\.dll", str(e), re.I): raise
+            progress(0)
+    return _run(path, model_size, "cpu", "int8", progress), "CPU"
 
 def group_lines(words, max_words=6, max_dur=2.8, gap=0.6):
     lines, cur = [], []
@@ -285,6 +339,9 @@ class App(QWidget):
         self.tlist = QListWidget(); self.tlist.currentItemChanged.connect(self.apply_tpl)
         self.btn_ref = QPushButton("Refresh templates"); self.btn_ref.clicked.connect(self.refresh)
         self.lbl_t = QLabel("")
+        self.btn_gpu = QPushButton("Set up NVIDIA GPU (one-time ~1.3 GB download)")
+        self.btn_gpu.clicked.connect(self.setup_gpu)
+        if gpu_ready(): self.btn_gpu.setText("NVIDIA GPU support installed")
         self.res = QComboBox(); self.res.addItems(list(RES))
         self.res.setToolTip("Output resolution (long side). Sources smaller than the target are upscaled.")
         self.codec = QComboBox(); self.codec.addItems(["H.264 (most compatible)", "H.265 (smaller 4K files)"])
@@ -301,7 +358,7 @@ class App(QWidget):
         left.addWidget(self.lbl); left.addWidget(self.bar); left.addWidget(self.table, 2)
         right.addWidget(QLabel("<b>Latest templates (top 10)</b>")); right.addWidget(self.tlist, 1)
         right.addWidget(self.lbl_t); right.addWidget(self.btn_ref)
-        right.addWidget(QLabel("<b>Export</b>")); right.addWidget(QLabel("Resolution")); right.addWidget(self.res)
+        right.addWidget(self.btn_gpu); right.addWidget(QLabel("<b>Export</b>")); right.addWidget(QLabel("Resolution")); right.addWidget(self.res)
         right.addWidget(QLabel("Codec")); right.addWidget(self.codec)
         right.addWidget(self.btn_srt); right.addWidget(self.btn_mp4)
         root = QHBoxLayout(self); root.addLayout(left, 3); root.addLayout(right, 1)
@@ -369,15 +426,22 @@ class App(QWidget):
     def apply_tpl(self, cur, _prev=None):
         if self.cap and cur: self.cap.tpl = cur.data(Qt.UserRole)
 
+    def setup_gpu(self):
+        if gpu_ready(): return QMessageBox.information(self, "GPU", "GPU support is already installed.")
+        self.lbl.setText("Downloading NVIDIA GPU libraries (~1.3 GB)..."); self.bar.setValue(0)
+        self.run(install_gpu_libs, lambda _: (self.bar.setValue(100), self.btn_gpu.setText("NVIDIA GPU support installed"),
+                 self.lbl.setText("GPU ready - generate captions again")))
+
     # ---- captions
     def generate(self):
         if not self.video: return QMessageBox.information(self, "Hinglish Captioner", "Open a video first.")
         self.lbl.setText("Transcribing (first run downloads the model)..."); self.bar.setValue(0)
         self.run(lambda prog: transcribe(self.video, self.model.currentText(), prog), self.got_lines)
 
-    def got_lines(self, lines):
+    def got_lines(self, res):
+        lines, dev = res
         self.lines = lines; self.starts = [l["start"] for l in lines]
-        self.bar.setValue(100); self.lbl.setText(f"{len(lines)} caption lines ready - press Play to preview")
+        self.bar.setValue(100); self.lbl.setText(f"{len(lines)} caption lines ready ({dev}) - press Play to preview")
         self.table.blockSignals(True); self.table.setRowCount(len(lines))
         for i, l in enumerate(lines):
             for c, v in enumerate((ts_srt(l["start"]), ts_srt(l["end"]), l["text"])):
